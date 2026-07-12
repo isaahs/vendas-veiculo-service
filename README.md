@@ -1,4 +1,4 @@
-# Vehicle Sales Service
+# Venda Veiculo Service
 
 Este é o microserviço de Vendas de Veículos (`vehicle-sales-service`), projetado para suportar altos picos de tráfego de maneira isolada. O serviço foi estruturado utilizando **Arquitetura Hexagonal (Clean/Ports and Adapters)** em Java 21 com Spring Boot.
 
@@ -127,3 +127,37 @@ Você pode executar o projeto Spring Boot com o Maven:
 ./mvnw spring-boot:run
 ```
 O Liquibase aplicará as migrations e o banco `db_vendas` será seedado automaticamente com dados de teste.
+
+---
+
+## 8. Como Executar os Testes
+
+Para garantir a qualidade e cobertura do código, execute o conjunto completo de testes utilizando a ferramenta de testes automatizados do Maven:
+
+### Executando Testes e Cobertura JaCoCo
+Para executar os testes unitários e de integração com a verificação de regras de cobertura de código do JaCoCo (mínimo de 80% exigido), execute:
+```bash
+./mvnw verify
+```
+Este comando executará:
+1. Os testes de unidade (Mockitos puros) de todos os casos de uso.
+2. Os testes de slice (MockMvc standalone) para os controllers REST.
+3. Os testes de integração de fluxo completo.
+
+### Testes de Integração com Testcontainers
+* Os testes de integração (como o `VendasServiceIntegrationTest`) utilizam o **Testcontainers** com a imagem `postgres:15-alpine` para provisionar um banco de dados real PostgreSQL de maneira efêmera e isolada.
+* **Sem dependência externa**: Você **não** precisa subir o `docker-compose` manualmente antes de rodar `./mvnw verify`. O Testcontainers iniciará e parará o container Docker automaticamente durante o ciclo de vida dos testes, desde que o Docker Daemon esteja instalado e rodando em sua máquina de desenvolvimento.
+
+### Testes Manuais com Swagger UI
+* Após subir a aplicação localmente (`./mvnw spring-boot:run`), você pode realizar testes manuais nos endpoints utilizando a interface gráfica interativa do Swagger UI em:
+  [http://localhost:8081/swagger-ui/index.html](http://localhost:8081/swagger-ui/index.html)
+
+---
+
+## 9. Decisões de Escopo (Out of Scope)
+
+Visando manter o microserviço altamente focado em escala de transações de compra e venda (vitrine de alta performance), algumas premissas e decisões de escopo conscientes foram adotadas no design do serviço:
+
+* **Gerenciamento Complexo de Status do Veículo**: Status adicionais do catálogo (como indisponibilidade por laudo cautelar malsucedido, inspeção mecânica pendente ou bloqueios judiciais) estão **fora do escopo** deste microserviço. O `vehicle-sales-service` limita-se a gerenciar apenas os estados fundamentais de venda local: `DISPONIVEL`, `RESERVADO` e `VENDIDO`. Regras avançadas de publicação e triagem de laudos de veículos são decisões delegadas inteiramente à montagem upstream do catálogo de anúncios.
+* **Validação de Placa e Atributos Físicos**: Validações detalhadas do formato da placa do veículo, cor ou ano não são validadas de forma sintática ou semântica por este serviço. O ItemCatalogo é tratado puramente como uma réplica local (vitrine) e assume que os dados sincronizados do catálogo já foram previamente sanitizados e validados pelo serviço de origem.
+* **Expiração de Reserva**: O serviço foca apenas em reverter reservas não pagas no tempo estipulado (`expira_em`). Qualquer outro processamento de pós-venda, devolução, faturamento de notas ou logística física de entrega está completamente fora do escopo deste microsserviço de vendas.
