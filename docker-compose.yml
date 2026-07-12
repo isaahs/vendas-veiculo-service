@@ -1,0 +1,23 @@
+version: '3.8'
+
+services:
+  db-vendas:
+    image: postgres:15-alpine
+    container_name: db-vendas
+    environment:
+      POSTGRES_DB: db_vendas
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata-vendas:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d db_vendas"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pgdata-vendas:
+    driver: local
