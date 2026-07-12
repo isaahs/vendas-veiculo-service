@@ -1,0 +1,48 @@
+databaseChangeLog:
+  - changeSet:
+      id: 2
+      author: fiap
+      changes:
+        - createTable:
+            tableName: tb_vendas
+            columns:
+              - column:
+                  name: id
+                  type: uuid
+                  constraints:
+                    primaryKey: true
+                    nullable: false
+              - column:
+                  name: item_catalogo_id
+                  type: uuid
+                  constraints:
+                    nullable: false
+                    foreignKeyName: fk_vendas_item_catalogo
+                    referencedTableName: tb_itens_catalogo
+                    referencedColumnNames: id
+              - column:
+                  name: cpf_comprador
+                  type: varchar(255)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: data_venda
+                  type: timestamp
+                  constraints:
+                    nullable: false
+              - column:
+                  name: codigo_pagamento
+                  type: varchar(255)
+                  constraints:
+                    nullable: false
+                    unique: true
+              - column:
+                  name: status
+                  type: varchar(50)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: expira_em
+                  type: timestamp
+                  constraints:
+                    nullable: false
