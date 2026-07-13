@@ -1,163 +1,248 @@
-# Venda Veiculo Service
+# Vendas Veículo Service
 
-Este é o microserviço de Vendas de Veículos (`vehicle-sales-service`), projetado para suportar altos picos de tráfego de maneira isolada. O serviço foi estruturado utilizando **Arquitetura Hexagonal (Clean/Ports and Adapters)** em Java 21 com Spring Boot.
-
----
-
-## 1. Responsabilidade do Serviço
-
-O serviço gerencia dois agregados principais:
-- **ItemCatalogo**: Uma réplica local dos dados de veículos do catálogo de anúncios (vitrine). Mantido sincronizado via push HTTP vindo do catálogo.
-- **Venda**: Registro de tentativa de compra de um veículo. Possui ciclo de vida independente do ItemCatalogo.
+Microsserviço de vendas de veículos da plataforma de revenda automotiva. Projetado para suportar altos picos de tráfego de forma isolada, gerencia a vitrine de veículos disponíveis, o fluxo de compra e o webhook de confirmação de pagamento.
 
 ---
 
-## 2. Premissas de Integração e Design
+## Sumário
 
-### Tratamento de Condições de Corrida (Race Conditions)
-* Ao consultar se um veículo já foi vendido via `GET /veiculos/{id}/vendido` (implementado por [VerificarVeiculoVendidoUseCase](file:///home/isadmot/Github/VendasService/src/main/java/br/com/fiap/sout/vendas/application/usecases/VerificarVeiculoVendidoUseCase.java)), caso o `veiculoId` consultado não exista localmente na tabela `tb_itens_catalogo`, o serviço retornará `false`.
-* **Premissa de negócio**: Se o veículo ainda não foi sincronizado com este serviço (por exemplo, devido a uma latência de rede logo após a criação no catálogo), ele certamente ainda não pôde ser vendido por aqui. Responder `false` permite que o catálogo continue liberando edições e publicações com segurança.
-
-### Garantia de Idempotência e Concorrência de Webhooks
-* A confirmação ou cancelamento da venda no webhook de pagamentos (`POST /pagamentos/webhook`) é feita através de um update condicional atômico (`status = 'PENDENTE_PAGAMENTO'`).
-* Caso a requisição seja duplicada e a venda já tenha sido processada (status `CONFIRMADA` ou `CANCELADA`), o banco de dados retornará 0 linhas afetadas. O serviço trata isso como um cenário de **idempotência de sucesso** e retorna HTTP 200 sem disparar novos updates ou erros ao cliente.
-
----
-
-## 3. Arquitetura do Projeto
-
-O projeto segue a seguinte estrutura de pacotes:
-
-- `domain`: Modelos de domínio puros, enums e exceções de negócio.
-- `application.ports`: Interfaces de comunicação do core:
-  - `in`: Interfaces chamadas pelos adapters de entrada (controllers e scheduler).
-  - `out`: Interfaces chamadas pelo domínio (persistência).
-- `application.usecases`: Casos de uso concretos que implementam os ports de entrada.
-- `adapter.in.web`: Controllers REST, DTOs e mappers de entrada.
-- `adapter.out.persistence`: Entidades JPA, mappers MapStruct e repositórios JPA.
-- `infra`: Filtros de segurança (JWT/HMAC), configurações de beans e schedulers.
+- [Visão geral](#visão-geral)
+- [Arquitetura](#arquitetura)
+- [Pré-requisitos](#pré-requisitos)
+- [Como rodar localmente](#como-rodar-localmente)
+- [Como executar os testes](#como-executar-os-testes)
+- [Documentação da API](#documentação-da-api)
+- [Testando o webhook de pagamento](#testando-o-webhook-de-pagamento)
+- [Segurança](#segurança)
+- [Variáveis de ambiente](#variáveis-de-ambiente)
+- [Decisões de escopo](#decisões-de-escopo)
 
 ---
 
-## 4. Modelagem de Dados
+## Visão geral
 
-### Tabela `tb_itens_catalogo`
-Réplica local do catálogo usada como vitrine performática.
+Este serviço mantém uma **réplica local** dos dados de veículos recebidos do `veiculo-catalogo-service` via push HTTP, e gerencia todo o fluxo de venda: reserva atômica (sem race condition), geração de código de pagamento, recebimento do webhook da processadora e expiração automática de reservas órfãs.
 
-| Campo | Tipo | Restrições | Descrição |
-|---|---|---|---|
-| `id` | UUID | Primary Key | Gerado localmente por este serviço |
-| `veiculo_id` | UUID | Not Null | Referência ao veículo no catálogo (sem FK real) |
-| `marca` | VARCHAR | Not Null | Marca do veículo |
-| `modelo` | VARCHAR | Not Null | Modelo do veículo |
-| `ano` | INT | Not Null | Ano do modelo do veículo |
-| `cor` | VARCHAR | Not Null | Cor do veículo |
-| `preco` | NUMERIC(19,2) | Not Null, Index | Preço (indexado para listagem rápida) |
-| `placa` | VARCHAR(8) | Not Null, Unique | Placa do veículo |
-| `status` | VARCHAR | Enum: `DISPONIVEL`, `RESERVADO`, `VENDIDO` | Status atual do item |
+**Responsabilidades:**
+- Receber e armazenar a réplica local dos veículos (sincronização push do catálogo)
+- Listar veículos disponíveis e vendidos (paginado, ordenado por preço)
+- Efetuar venda com reserva atômica via update condicional
+- Receber webhook de pagamento com validação HMAC-SHA256 e idempotência garantida
+- Expirar reservas órfãs automaticamente via scheduler
+- Responder ao catálogo se um veículo já foi vendido
 
-### Tabela `tb_vendas`
-Registra a intenção de compra e as reservas.
-
-| Campo | Tipo | Restrições | Descrição |
-|---|---|---|---|
-| `id` | UUID | Primary Key | ID da venda |
-| `item_catalogo_id` | UUID | FK -> `tb_itens_catalogo(id)` | Referência ao item reservado/vendido |
-| `cpf_comprador` | VARCHAR | Not Null | CPF do comprador |
-| `data_venda` | TIMESTAMP | Not Null | Data e hora em que a reserva foi feita |
-| `codigo_pagamento` | VARCHAR | Not Null, Unique | Código gerado para identificação do pagamento |
-| `status` | VARCHAR | Enum: `PENDENTE_PAGAMENTO`, `CONFIRMADA`, `CANCELADA` | Estado da venda |
-| `expira_em` | TIMESTAMP | Not Null | Data e hora limite para expiração da reserva |
+> **Este serviço não tem Terraform nem manifests Kubernetes próprios.** Toda a infraestrutura é provisionada pelo `veiculo-catalogo-service`. Para o ambiente Kubernetes completo, siga o README daquele repositório.
 
 ---
 
-## 5. Endpoints da API
+## Arquitetura
 
-A documentação interativa da API está disponível via **Swagger UI** (quando a aplicação está rodando) em:
-- [http://localhost:8081/swagger-ui/index.html](http://localhost:8081/swagger-ui/index.html)
-
-### Item Catalogo (Veículos)
-- `POST /veiculos` (Autenticado via **JWT M2M**)
-  - Sincroniza dados enviados pelo catálogo.
-- `GET /veiculos` (Público)
-  - Retorna veículos `DISPONIVEL` paginados e ordenados por preço ASC.
-- `GET /veiculos/vendidos` (Público)
-  - Retorna veículos `VENDIDO` paginados e ordenados por preço ASC.
-- `GET /veiculos/{id}/vendido` (Autenticado via **JWT M2M**)
-  - Verifica pontualmente se um veículo (`veiculoId`) já foi vendido.
-
-### Vendas
-- `POST /vendas` (Público)
-  - Efetua venda do veículo através de um comando contendo CPF e ID do item. Reserva o veículo e gera o `codigoPagamento` da venda.
-
-### Webhook de Pagamentos
-- `POST /pagamentos/webhook` (Autenticado via **HMAC-SHA256**)
-  - Recebe notificações do processador de pagamentos (`status: APROVADO` ou `CANCELADO`).
-  - Header obrigatório: `X-Signature` contendo o hash HMAC-SHA256 do payload JSON.
-
----
-
-## 6. Segurança
-
-O serviço utiliza duas cadeias de autenticação distintas:
-
-1. **JWT M2M (Machine-to-Machine)**:
-   - Validado no cabeçalho `Authorization: Bearer <token>` em rotas internas do catálogo (`POST /veiculos` e `GET /veiculos/{id}/vendido`).
-   - A chave secreta (`jwt.secret`) é compartilhada com o serviço do catálogo.
-   - > [!IMPORTANT]
-     > **Requisito de Configuração em Produção**: O segredo definido na propriedade `jwt.secret` (variável de ambiente `JWT_SECRET`) **deve ser idêntico** ao segredo configurado no catálogo de veículos. Ambos os serviços precisam compartilhar da mesma chave para que o JWT gerado pelo catálogo seja validado com sucesso pelo serviço de vendas.
-
-2. **HMAC-SHA256 (Webhook)**:
-   - Validado no cabeçalho `X-Signature` no endpoint `/pagamentos/webhook`.
-   - O filtro recalculada o HMAC do corpo da requisição bruta usando `hmac.secret` e valida a integridade/autoridade do envio.
-
----
-
-## 7. Como Executar Localmente
-
-### Passo 1: Subir o banco de dados PostgreSQL
-Suba o container PostgreSQL mapeado na porta `5433` (para não colidir com o catálogo):
-```bash
-docker-compose up -d
+```
+vendas-veiculo-service/
+├── src/main/java/.../vendas/
+│   ├── domain/
+│   │   ├── model/       → ItemCatalogo, Venda (records imutáveis)
+│   │   ├── enums/       → StatusItemCatalogo, StatusVenda, StatusPagamento
+│   │   └── exceptions/  → Exceções de negócio
+│   ├── application/
+│   │   ├── ports/in/    → Interfaces dos casos de uso (entrada)
+│   │   ├── ports/out/   → Interfaces de repositório (saída)
+│   │   └── usecases/    → Lógica de negócio pura (sem Spring)
+│   ├── adapter/
+│   │   ├── in/web/      → Controllers REST, DTOs, mappers, exception handler
+│   │   └── out/persistence/ → Entidades JPA, repositórios, mappers MapStruct
+│   └── infra/
+│       ├── config/      → UseCaseConfig, OpenApiConfig, SecurityConfig
+│       ├── security/    → JwtAuthenticationFilter, HmacSignatureFilter
+│       └── scheduler/   → Job de expiração de reservas órfãs
+└── docker-compose.yml   → PostgreSQL local (porta 5433)
 ```
 
-### Passo 2: Executar a aplicação
-Você pode executar o projeto Spring Boot com o Maven:
+**Padrão:** Arquitetura Hexagonal (Ports & Adapters)  
+**Stack:** Java 21, Spring Boot 4.1.0, Spring Security, PostgreSQL 15, Liquibase, MapStruct
+
+---
+
+## Pré-requisitos
+
+| Ferramenta | Versão mínima | Instalação |
+|---|---|---|
+| Java | 21 | [Temurin](https://adoptium.net/) |
+| Maven | 3.9+ | [maven.apache.org](https://maven.apache.org/) |
+| Docker + Docker Compose | 24+ | [docker.com](https://www.docker.com/) |
+
+> Para rodar com Kubernetes, siga o README do `veiculo-catalogo-service`.
+
+---
+
+## Como rodar localmente
+
+O banco deste serviço usa a **porta 5433** para não conflitar com o `veiculo-catalogo-service` (porta 5432).
+
+### Passo 1 — Clone o repositório
+
+```bash
+git clone https://github.com/<seu-usuario>/vendas-veiculo-service.git
+cd vendas-veiculo-service
+```
+
+### Passo 2 — Suba o banco de dados
+
+```bash
+docker compose up -d
+```
+
+### Passo 3 — Execute a aplicação
+
 ```bash
 ./mvnw spring-boot:run
 ```
-O Liquibase aplicará as migrations e o banco `db_vendas` será seedado automaticamente com dados de teste.
+
+O Liquibase aplicará as migrations e seedará o banco com dados de teste automaticamente. A aplicação ficará disponível em `http://localhost:8081`.
+
+### Rodando os dois serviços juntos (fluxo completo)
+
+**Terminal 1 — catálogo:**
+```bash
+cd veiculo-catalogo-service
+docker compose up -d postgres-catalogo
+./mvnw spring-boot:run
+```
+
+**Terminal 2 — vendas:**
+```bash
+cd vendas-veiculo-service
+docker compose up -d
+./mvnw spring-boot:run
+```
 
 ---
 
-## 8. Como Executar os Testes
+## Como executar os testes
 
-Para garantir a qualidade e cobertura do código, execute o conjunto completo de testes utilizando a ferramenta de testes automatizados do Maven:
-
-### Executando Testes e Cobertura JaCoCo
-Para executar os testes unitários e de integração com a verificação de regras de cobertura de código do JaCoCo (mínimo de 80% exigido), execute:
 ```bash
 ./mvnw verify
 ```
-Este comando executará:
-1. Os testes de unidade (Mockitos puros) de todos os casos de uso.
-2. Os testes de slice (MockMvc standalone) para os controllers REST.
-3. Os testes de integração de fluxo completo.
+Relatório de cobertura (JaCoCo):
+```
+target/site/jacoco/index.html
+```
 
-### Testes de Integração com Testcontainers
-* Os testes de integração (como o `VendasServiceIntegrationTest`) utilizam o **Testcontainers** com a imagem `postgres:15-alpine` para provisionar um banco de dados real PostgreSQL de maneira efêmera e isolada.
-* **Sem dependência externa**: Você **não** precisa subir o `docker-compose` manualmente antes de rodar `./mvnw verify`. O Testcontainers iniciará e parará o container Docker automaticamente durante o ciclo de vida dos testes, desde que o Docker Daemon esteja instalado e rodando em sua máquina de desenvolvimento.
-
-### Testes Manuais com Swagger UI
-* Após subir a aplicação localmente (`./mvnw spring-boot:run`), você pode realizar testes manuais nos endpoints utilizando a interface gráfica interativa do Swagger UI em:
-  [http://localhost:8081/swagger-ui/index.html](http://localhost:8081/swagger-ui/index.html)
+| Tipo | O que testa | Ferramenta |
+|---|---|---|
+| Unitário | Use cases (lógica de negócio pura) | JUnit 5 + Mockito |
+| Slice | Controllers REST + filtros de segurança | `@WebMvcTest` + MockMvc |
+| Integração | Fluxo completo (sincronizar → vender → webhook → confirmar) | `@SpringBootTest` + Testcontainers |
 
 ---
 
-## 9. Decisões de Escopo (Out of Scope)
+## Documentação da API
 
-Visando manter o microserviço altamente focado em escala de transações de compra e venda (vitrine de alta performance), algumas premissas e decisões de escopo conscientes foram adotadas no design do serviço:
+- **Swagger UI:** http://localhost:8081/swagger-ui/index.html
+- **OpenAPI JSON:** http://localhost:8081/v3/api-docs
 
-* **Gerenciamento Complexo de Status do Veículo**: Status adicionais do catálogo (como indisponibilidade por laudo cautelar malsucedido, inspeção mecânica pendente ou bloqueios judiciais) estão **fora do escopo** deste microserviço. O `vehicle-sales-service` limita-se a gerenciar apenas os estados fundamentais de venda local: `DISPONIVEL`, `RESERVADO` e `VENDIDO`. Regras avançadas de publicação e triagem de laudos de veículos são decisões delegadas inteiramente à montagem upstream do catálogo de anúncios.
-* **Validação de Placa e Atributos Físicos**: Validações detalhadas do formato da placa do veículo, cor ou ano não são validadas de forma sintática ou semântica por este serviço. O ItemCatalogo é tratado puramente como uma réplica local (vitrine) e assume que os dados sincronizados do catálogo já foram previamente sanitizados e validados pelo serviço de origem.
-* **Expiração de Reserva**: O serviço foca apenas em reverter reservas não pagas no tempo estipulado (`expira_em`). Qualquer outro processamento de pós-venda, devolução, faturamento de notas ou logística física de entrega está completamente fora do escopo deste microsserviço de vendas.
+| Método | Rota | Descrição | Autenticação |
+|---|---|---|---|
+| `POST` | `/veiculos` | Recebe sincronização do catálogo | JWT M2M |
+| `GET` | `/veiculos` | Lista veículos disponíveis (paginado, ordem por preço) | Pública |
+| `GET` | `/veiculos/vendidos` | Lista veículos vendidos (paginado, ordem por preço) | Pública |
+| `GET` | `/veiculos/{id}/vendido` | Verifica se veículo foi vendido | JWT M2M |
+| `POST` | `/vendas` | Efetua venda (reserva + código de pagamento) | Pública |
+| `POST` | `/pagamentos/webhook` | Confirma/cancela pagamento | HMAC-SHA256 |
+
+**Paginação:**
+```
+GET /veiculos?page=0&size=10
+GET /veiculos/vendidos?page=0&size=20
+```
+
+---
+
+## Testando o webhook de pagamento
+
+O endpoint `POST /pagamentos/webhook` exige o header `X-Signature` com o HMAC-SHA256 do corpo da requisição. Use o comando abaixo para calcular a assinatura e enviar a requisição:
+
+```bash
+BODY='{"codigoPagamento":"SEU_CODIGO_DE_PAGAMENTO","status":"APROVADO"}'
+SIG=$(echo -n "$BODY" | openssl dgst -sha256 -hmac "super-secret-hmac-signature-key-for-webhook-validation-2026" | awk '{print $2}')
+
+curl -X POST http://localhost:8081/pagamentos/webhook \
+  -H "Content-Type: application/json" \
+  -H "X-Signature: $SIG" \
+  -d "$BODY"
+```
+
+Para cancelar o pagamento, use `"status":"CANCELADO"` no body.
+
+> **Segredo HMAC local:** `super-secret-hmac-signature-key-for-webhook-validation-2026`  
+> Este é o valor configurado no Secret Kubernetes (`k8s/vendas/secret.yaml`). Em produção, este segredo deve ser diferente e compartilhado com a processadora de pagamentos.
+
+### Fluxo completo de teste via curl
+
+```bash
+# 1. Cadastra veículo no catálogo
+curl -X POST http://localhost:8080/veiculos \
+  -H "Content-Type: application/json" \
+  -d '{"marca":"Toyota","modelo":"Corolla","ano":2023,"cor":"Prata","preco":150000.00,"placa":"TST1A23"}'
+
+# 2. Lista veículos disponíveis em vendas (aguarda a sincronização)
+curl http://localhost:8081/veiculos
+
+# 3. Efetua venda (substitua o itemCatalogoId pelo id retornado no passo 2)
+curl -X POST http://localhost:8081/vendas \
+  -H "Content-Type: application/json" \
+  -d '{"cpfComprador":"123.456.789-00","itemCatalogoId":"ID_DO_ITEM_AQUI"}'
+
+# 4. Confirma o pagamento via webhook (substitua o codigoPagamento pelo retornado no passo 3)
+BODY='{"codigoPagamento":"CODIGO_AQUI","status":"APROVADO"}'
+SIG=$(echo -n "$BODY" | openssl dgst -sha256 -hmac "super-secret-hmac-signature-key-for-webhook-validation-2026" | awk '{print $2}')
+curl -X POST http://localhost:8081/pagamentos/webhook \
+  -H "Content-Type: application/json" \
+  -H "X-Signature: $SIG" \
+  -d "$BODY"
+
+# 5. Confirma que o veículo aparece como VENDIDO
+curl http://localhost:8081/veiculos/vendidos
+```
+
+---
+
+## Segurança
+
+### JWT M2M
+
+Protege rotas internas chamadas pelo `veiculo-catalogo-service`:
+- `POST /veiculos` e `GET /veiculos/{id}/vendido`
+
+Header: `Authorization: Bearer <token>`
+
+Token ausente → `400 Bad Request`. Token inválido → `403 Forbidden`.
+
+> O segredo JWT (`jwt.secret`) deve ser **idêntico** ao configurado no `veiculo-catalogo-service`.
+
+### HMAC-SHA256
+
+Protege o webhook de pagamento:
+- `POST /pagamentos/webhook`
+
+Header: `X-Signature: <hmac-sha256-do-corpo-em-hex>`
+
+Assinatura ausente → `400 Bad Request`. Assinatura incorreta → `403 Forbidden`.
+
+---
+
+## Variáveis de ambiente
+
+| Variável | Padrão (local) | Descrição |
+|---|---|---|
+| `DB_HOST` | `localhost` | Host do banco |
+| `DB_PORT` | `5433` | Porta do banco |
+| `DB_NAME` | `db_vendas` | Nome do banco |
+| `DB_USERNAME` | `postgres` | Usuário do banco |
+| `DB_PASSWORD` | `postgres` | Senha do banco |
+| `JWT_SECRET` | *(ver application.yaml)* | Segredo JWT compartilhado com o catálogo |
+| `HMAC_SECRET` | `super-secret-hmac-signature-key-for-webhook-validation-2026` | Segredo HMAC do webhook |
+| `RESERVA_EXPIRACAO_MINUTOS` | `10` | Tempo de expiração da reserva |
+| `RESERVA_EXPIRACAO_INTERVALO_MS` | `60000` | Intervalo do scheduler (ms) |
+
+---
