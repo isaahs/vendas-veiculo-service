@@ -6,6 +6,7 @@ import br.com.fiap.sout.vendas.application.ports.out.ItemCatalogoRepositoryPort;
 import br.com.fiap.sout.vendas.application.ports.out.VendaRepositoryPort;
 import br.com.fiap.sout.vendas.domain.enums.StatusVenda;
 import br.com.fiap.sout.vendas.domain.exceptions.VeiculoIndisponivelException;
+import br.com.fiap.sout.vendas.domain.model.ItemCatalogo;
 import br.com.fiap.sout.vendas.domain.model.Venda;
 import java.time.LocalDateTime;
 import java.util.UUID;
@@ -28,7 +29,10 @@ public class EfetuarVendaUseCase implements EfetuarVendaPort {
 
     @Override
     public Venda efetuarVenda(EfetuarVendaCommand command) {
-        int linhasAfetadas = itemCatalogoRepositoryPort.reservar(command.itemCatalogoId());
+        ItemCatalogo itemCatalogo = itemCatalogoRepositoryPort.buscarPorVeiculoId(command.veiculoId())
+                .orElseThrow(() -> new VeiculoIndisponivelException("O veículo não está disponível para reserva ou venda."));
+
+        int linhasAfetadas = itemCatalogoRepositoryPort.reservar(itemCatalogo.id());
         if (linhasAfetadas == 0) {
             throw new VeiculoIndisponivelException("O veículo não está disponível para reserva ou venda.");
         }
@@ -40,7 +44,7 @@ public class EfetuarVendaUseCase implements EfetuarVendaPort {
 
         Venda venda = new Venda(
             vendaId,
-            command.itemCatalogoId(),
+            itemCatalogo.id(),
             command.cpfComprador(),
             dataVenda,
             codigoPagamento,

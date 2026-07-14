@@ -47,7 +47,7 @@ class VendaAdapterTest {
     @Test
     void efetuarVenda_whenValidRequest_shouldReturn201Created() throws Exception {
         UUID itemCatalogoId = UUID.randomUUID();
-        EfetuarVendaRequestDto request = new EfetuarVendaRequestDto("123.456.789-00", itemCatalogoId);
+        EfetuarVendaRequestDto request = new EfetuarVendaRequestDto("123.456.789-00", UUID.randomUUID());
 
         Venda mockVenda = new Venda(
                 UUID.randomUUID(), itemCatalogoId, "123.456.789-00", LocalDateTime.now(),
@@ -82,6 +82,6 @@ class VendaAdapterTest {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.title").value("Erro de Validação"))
                 .andExpect(jsonPath("$.invalid_fields.cpfComprador").exists())
-                .andExpect(jsonPath("$.invalid_fields.itemCatalogoId").exists());
+                .andExpect(jsonPath("$.invalid_fields.veiculoId").exists());
     }
 }

@@ -141,7 +141,7 @@ class VendasServiceIntegrationTest {
                 .build();
         itemCatalogoJpaRepository.save(item);
 
-        EfetuarVendaRequestDto vendaRequest = new EfetuarVendaRequestDto("12345678900", item.getId());
+        EfetuarVendaRequestDto vendaRequest = new EfetuarVendaRequestDto("12345678900", item.getVeiculoId());
         String vendaResponseStr = mockMvc.perform(post("/vendas")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(vendaRequest)))

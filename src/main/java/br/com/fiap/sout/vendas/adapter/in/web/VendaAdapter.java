@@ -25,7 +25,7 @@ public class VendaAdapter {
 
     @PostMapping
     public ResponseEntity<VendaResponseDto> efetuarVenda(@Valid @RequestBody EfetuarVendaRequestDto request) {
-        EfetuarVendaCommand command = new EfetuarVendaCommand(request.cpfComprador(), request.itemCatalogoId());
+        EfetuarVendaCommand command = new EfetuarVendaCommand(request.cpfComprador(), request.veiculoId());
         Venda venda = efetuarVendaPort.efetuarVenda(command);
         VendaResponseDto response = webMapper.toResponseDto(venda);
         return ResponseEntity.status(HttpStatus.CREATED).body(response);

@@ -12,7 +12,7 @@ class EfetuarVendaCommandTest {
         UUID id = UUID.randomUUID();
         EfetuarVendaCommand command = new EfetuarVendaCommand("12345678901", id);
         assertEquals("12345678901", command.cpfComprador());
-        assertEquals(id, command.itemCatalogoId());
+        assertEquals(id, command.veiculoId());
     }
 
     @Test
@@ -34,10 +34,10 @@ class EfetuarVendaCommandTest {
     }
 
     @Test
-    void shouldThrowExceptionWhenItemCatalogoIdIsNull() {
+    void shouldThrowExceptionWhenVeiculoIdIsNull() {
         IllegalArgumentException exception = assertThrows(IllegalArgumentException.class, () ->
             new EfetuarVendaCommand("12345678901", null)
         );
-        assertEquals("O ID do item do catálogo é obrigatório", exception.getMessage());
+        assertEquals("O ID do veículo é obrigatório", exception.getMessage());
     }
 }
