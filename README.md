@@ -143,67 +143,18 @@ target/site/jacoco/index.html
 
 | Método | Rota | Descrição | Autenticação |
 |---|---|---|---|
-| `POST` | `/veiculos` | Recebe sincronização do catálogo | JWT M2M |
+| `POST` | `/veiculos` | Recebe sincronização do catálogo *(oculta no Swagger, ver nota abaixo)* | JWT M2M |
 | `GET` | `/veiculos` | Lista veículos disponíveis (paginado, ordem por preço) | Pública |
 | `GET` | `/veiculos/vendidos` | Lista veículos vendidos (paginado, ordem por preço) | Pública |
-| `GET` | `/veiculos/{id}/vendido` | Verifica se veículo foi vendido | JWT M2M |
+| `GET` | `/veiculos/{id}/vendido` | Verifica se veículo foi vendido *(oculta no Swagger, ver nota abaixo)* | JWT M2M |
 | `POST` | `/vendas` | Efetua venda (reserva + código de pagamento) | Pública |
 | `POST` | `/pagamentos/webhook` | Confirma/cancela pagamento | HMAC-SHA256 |
+| `POST` | `/auth/token` | *(perfil `dev`)* Gera um JWT M2M para testar as rotas acima no Swagger | Pública |
+| `POST` | `/auth/hmac-signature` | *(perfil `dev`)* Gera corpo canônico + assinatura para testar o webhook no Swagger | Pública |
 
-**Paginação:**
-```
-GET /veiculos?page=0&size=10
-GET /veiculos/vendidos?page=0&size=20
-```
+> **Rotas ocultas do Swagger:** `POST /veiculos` e `GET /veiculos/{id}/vendido` são chamadas apenas pelo `veiculo-catalogo-service` (M2M), por isso têm `@Hidden` e não aparecem na UI — mas continuam funcionando normalmente para quem tiver o token. Use `POST /auth/token` para gerar um token de teste e chame-as diretamente via curl/Postman.
 
----
-
-## Testando o webhook de pagamento
-
-O endpoint `POST /pagamentos/webhook` exige o header `X-Signature` com o HMAC-SHA256 do corpo da requisição. Use o comando abaixo para calcular a assinatura e enviar a requisição:
-
-```bash
-BODY='{"codigoPagamento":"SEU_CODIGO_DE_PAGAMENTO","status":"APROVADO"}'
-SIG=$(echo -n "$BODY" | openssl dgst -sha256 -hmac "super-secret-hmac-signature-key-for-webhook-validation-2026" | awk '{print $2}')
-
-curl -X POST http://localhost:8081/pagamentos/webhook \
-  -H "Content-Type: application/json" \
-  -H "X-Signature: $SIG" \
-  -d "$BODY"
-```
-
-Para cancelar o pagamento, use `"status":"CANCELADO"` no body.
-
-> **Segredo HMAC local:** `super-secret-hmac-signature-key-for-webhook-validation-2026`  
-> Este é o valor configurado no Secret Kubernetes (`k8s/vendas/secret.yaml`). Em produção, este segredo deve ser diferente e compartilhado com a processadora de pagamentos.
-
-### Fluxo completo de teste via curl
-
-```bash
-# 1. Cadastra veículo no catálogo
-curl -X POST http://localhost:8080/veiculos \
-  -H "Content-Type: application/json" \
-  -d '{"marca":"Toyota","modelo":"Corolla","ano":2023,"cor":"Prata","preco":150000.00,"placa":"TST1A23"}'
-
-# 2. Lista veículos disponíveis em vendas (aguarda a sincronização)
-curl http://localhost:8081/veiculos
-
-# 3. Efetua venda (substitua o itemCatalogoId pelo id retornado no passo 2)
-curl -X POST http://localhost:8081/vendas \
-  -H "Content-Type: application/json" \
-  -d '{"cpfComprador":"123.456.789-00","itemCatalogoId":"ID_DO_ITEM_AQUI"}'
-
-# 4. Confirma o pagamento via webhook (substitua o codigoPagamento pelo retornado no passo 3)
-BODY='{"codigoPagamento":"CODIGO_AQUI","status":"APROVADO"}'
-SIG=$(echo -n "$BODY" | openssl dgst -sha256 -hmac "super-secret-hmac-signature-key-for-webhook-validation-2026" | awk '{print $2}')
-curl -X POST http://localhost:8081/pagamentos/webhook \
-  -H "Content-Type: application/json" \
-  -H "X-Signature: $SIG" \
-  -d "$BODY"
-
-# 5. Confirma que o veículo aparece como VENDIDO
-curl http://localhost:8081/veiculos/vendidos
-```
+> **⚠️ Cuidado com `id` x `veiculoId`:** os itens do catálogo retornados por `GET /veiculos` trazem dois identificadores parecidos: `id` (chave interna deste serviço, gerada aqui) e `veiculoId` (o ID do veículo no `veiculo-catalogo-service`). **Todas as rotas voltadas a quem consome a API — `POST /vendas`, `GET /veiculos/{id}/vendido` — usam sempre o `veiculoId`, nunca o `id`.** Confundir os dois é a causa mais comum de um `409 Conflict` inesperado em `POST /vendas`.
 
 ---
 
@@ -229,12 +180,32 @@ Header: `X-Signature: <hmac-sha256-do-corpo-em-hex>`
 
 Assinatura ausente → `400 Bad Request`. Assinatura incorreta → `403 Forbidden`.
 
+### Endpoints de teste (perfil `dev`)
+
+`POST /auth/token` e `POST /auth/hmac-signature` só existem quando o perfil Spring `dev` está ativo (`spring.profiles.active`). Eles emitem tokens JWT e assinaturas HMAC válidos **sem nenhuma autenticação real**, então servem apenas para facilitar testes manuais (Swagger/curl). Se essas rotas não aparecerem no Swagger, o perfil `dev` não está ativo — ative-o por uma das formas abaixo.
+
+**Já vem ativo por padrão** (`spring.profiles.active: dev` no `application.yaml`), então normalmente nenhuma ação é necessária. Se precisar ativar explicitamente (por exemplo, se o padrão for removido ou sobrescrito):
+
+- **Rodando com Maven:**
+  ```bash
+  SPRING_PROFILES_ACTIVE=dev ./mvnw spring-boot:run
+  ```
+- **Rodando o jar diretamente:**
+  ```bash
+  java -jar target/VendasService-*.jar --spring.profiles.active=dev
+  ```
+- **Pela IDE (IntelliJ/VS Code):** na configuração de execução (*Run Configuration*), adicione a variável de ambiente `SPRING_PROFILES_ACTIVE=dev`.
+- **Em Docker/Kubernetes:** defina a variável de ambiente `SPRING_PROFILES_ACTIVE=dev` no container (já configurado em `k8s/vendas/deployment.yaml`, no repositório `veiculo-catalogo-service`).
+
+Depois de ativar, reinicie a aplicação e recarregue o Swagger (`http://localhost:8081/swagger-ui/index.html`) — `POST /auth/token` e `POST /auth/hmac-signature` devem aparecer na tag **Autenticação**.
+
 ---
 
 ## Variáveis de ambiente
 
 | Variável | Padrão (local) | Descrição |
 |---|---|---|
+| `SPRING_PROFILES_ACTIVE` | `dev` | Perfil ativo. Habilita `POST /auth/token` e `POST /auth/hmac-signature`. **Não usar `dev` em produção.** |
 | `DB_HOST` | `localhost` | Host do banco |
 | `DB_PORT` | `5433` | Porta do banco |
 | `DB_NAME` | `db_vendas` | Nome do banco |

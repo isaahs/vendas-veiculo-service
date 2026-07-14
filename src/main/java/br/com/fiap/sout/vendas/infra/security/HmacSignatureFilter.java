@@ -1,7 +1,9 @@
 package br.com.fiap.sout.vendas.infra.security;
 
+import br.com.fiap.sout.vendas.adapter.in.web.dto.WebhookPagamentoRequestDto;
 import br.com.fiap.sout.vendas.domain.exceptions.AssinaturaAusenteException;
 import br.com.fiap.sout.vendas.domain.exceptions.AssinaturaInvalidaException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -27,6 +29,7 @@ public class HmacSignatureFilter extends OncePerRequestFilter {
 
     private final String hmacSecret;
     private final HandlerExceptionResolver resolver;
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
     public HmacSignatureFilter(
             @Value("${hmac.secret}") String hmacSecret,
@@ -53,7 +56,8 @@ public class HmacSignatureFilter extends OncePerRequestFilter {
             }
 
             try {
-                String calculatedSignature = calculateHmac(cachedRequest.getCachedBody());
+                byte[] corpoCanonico = canonicalizar(cachedRequest.getCachedBody());
+                String calculatedSignature = calculateHmac(corpoCanonico);
                 if (!calculatedSignature.equalsIgnoreCase(signatureHeader)) {
                     resolver.resolveException(cachedRequest, response, null, new AssinaturaInvalidaException("Assinatura de webhook inválida."));
                     return;
@@ -75,6 +79,13 @@ public class HmacSignatureFilter extends OncePerRequestFilter {
         }
 
         filterChain.doFilter(request, response);
+    }
+
+    // Reserializa em forma canônica (sem espaços/quebras de linha, ordem fixa de campos) antes de assinar,
+    // já que clientes como o Swagger reformatam o JSON digitado e isso quebraria uma assinatura sobre os bytes literais.
+    private byte[] canonicalizar(byte[] body) throws IOException {
+        WebhookPagamentoRequestDto dto = objectMapper.readValue(body, WebhookPagamentoRequestDto.class);
+        return objectMapper.writeValueAsBytes(dto);
     }
 
     private String calculateHmac(byte[] body) throws NoSuchAlgorithmException, InvalidKeyException {

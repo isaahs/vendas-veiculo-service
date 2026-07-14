@@ -6,6 +6,7 @@ import br.com.fiap.sout.vendas.adapter.in.web.mapper.VendaWebMapper;
 import br.com.fiap.sout.vendas.application.ports.in.EfetuarVendaCommand;
 import br.com.fiap.sout.vendas.application.ports.in.EfetuarVendaPort;
 import br.com.fiap.sout.vendas.domain.model.Venda;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -13,6 +14,7 @@ import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/vendas")
+@Tag(name = "Vendas")
 public class VendaAdapter {
 
     private final EfetuarVendaPort efetuarVendaPort;

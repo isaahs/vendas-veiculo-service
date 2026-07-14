@@ -9,8 +9,11 @@ import br.com.fiap.sout.vendas.application.ports.in.SincronizarItemCatalogoPort;
 import br.com.fiap.sout.vendas.application.ports.in.VerificarVeiculoVendidoPort;
 import br.com.fiap.sout.vendas.domain.enums.StatusItemCatalogo;
 import br.com.fiap.sout.vendas.domain.model.ItemCatalogo;
+import io.swagger.v3.oas.annotations.Hidden;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
+import org.springdoc.core.annotations.ParameterObject;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
@@ -23,6 +26,7 @@ import java.util.UUID;
 
 @RestController
 @RequestMapping
+@Tag(name = "Catálogo")
 public class ItemCatalogoAdapter {
 
     private final SincronizarItemCatalogoPort sincronizarItemCatalogoPort;
@@ -47,6 +51,7 @@ public class ItemCatalogoAdapter {
 
     @PostMapping("/veiculos")
     @SecurityRequirement(name = "bearerAuth")
+    @Hidden
     public ResponseEntity<Void> sincronizar(@Valid @RequestBody SincronizarVeiculoRequestDto request) {
         ItemCatalogo itemCatalogo = new ItemCatalogo(
                 UUID.randomUUID(),
@@ -65,7 +70,7 @@ public class ItemCatalogoAdapter {
 
     @GetMapping("/veiculos")
     public ResponseEntity<Page<ItemCatalogoResponseDto>> listarDisponiveis(
-            @PageableDefault(sort = "preco", direction = Sort.Direction.ASC) Pageable pageable
+            @ParameterObject @PageableDefault(sort = "preco", direction = Sort.Direction.ASC) Pageable pageable
     ) {
         Page<ItemCatalogoResponseDto> response = listarVeiculosDisponiveisPort.listarDisponiveis(pageable)
                 .map(webMapper::toResponseDto);
@@ -74,7 +79,7 @@ public class ItemCatalogoAdapter {
 
     @GetMapping("/veiculos/vendidos")
     public ResponseEntity<Page<ItemCatalogoResponseDto>> listarVendidos(
-            @PageableDefault(sort = "preco", direction = Sort.Direction.ASC) Pageable pageable
+            @ParameterObject @PageableDefault(sort = "preco", direction = Sort.Direction.ASC) Pageable pageable
     ) {
         Page<ItemCatalogoResponseDto> response = listarVeiculosVendidosPort.listarVendidos(pageable)
                 .map(webMapper::toResponseDto);
@@ -83,6 +88,7 @@ public class ItemCatalogoAdapter {
 
     @GetMapping("/veiculos/{id}/vendido")
     @SecurityRequirement(name = "bearerAuth")
+    @Hidden
     public ResponseEntity<Boolean> verificarVendido(@PathVariable("id") UUID veiculoId) {
         boolean vendido = verificarVeiculoVendidoPort.verificarVeiculoVendido(veiculoId);
         return ResponseEntity.ok(vendido);

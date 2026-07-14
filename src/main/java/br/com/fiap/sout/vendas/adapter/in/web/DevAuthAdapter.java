@@ -7,6 +7,7 @@ import com.auth0.jwt.JWT;
 import com.auth0.jwt.algorithms.Algorithm;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Profile;
@@ -25,6 +26,7 @@ import java.util.Date;
 @RestController
 @RequestMapping("/auth")
 @Profile("dev")
+@Tag(name = "Autenticação")
 public class DevAuthAdapter {
 
     private static final long EXPIRACAO_SEGUNDOS = 3600;
@@ -41,9 +43,9 @@ public class DevAuthAdapter {
         this.hmacSecret = hmacSecret;
     }
 
-    @PostMapping("/dev-token")
-    @Operation(summary = "[DEV ONLY] Gera um token JWT M2M para testar as rotas internas no Swagger")
-    public ResponseEntity<DevTokenResponseDto> gerarTokenDev() {
+    @PostMapping("/token")
+    @Operation(summary = "Gera um token JWT M2M para testar as rotas internas no Swagger")
+    public ResponseEntity<DevTokenResponseDto> gerarToken() {
         Date expiraEm = new Date(System.currentTimeMillis() + EXPIRACAO_SEGUNDOS * 1000);
         String token = JWT.create()
                 .withSubject("catalogo-service")
@@ -53,9 +55,9 @@ public class DevAuthAdapter {
         return ResponseEntity.ok(new DevTokenResponseDto(token, "Bearer", EXPIRACAO_SEGUNDOS));
     }
 
-    @PostMapping("/dev-hmac-signature")
-    @Operation(summary = "[DEV ONLY] Gera o corpo canônico e o header X-Signature para testar o webhook de pagamentos no Swagger")
-    public ResponseEntity<DevHmacSignatureResponseDto> gerarAssinaturaDev(@Valid @RequestBody DevHmacSignatureRequestDto request) throws Exception {
+    @PostMapping("/hmac-signature")
+    @Operation(summary = "Gera o corpo canônico e o header X-Signature para testar o webhook de pagamentos no Swagger")
+    public ResponseEntity<DevHmacSignatureResponseDto> gerarAssinatura(@Valid @RequestBody DevHmacSignatureRequestDto request) throws Exception {
         String body = objectMapper.writeValueAsString(request);
 
         Mac sha256Hmac = Mac.getInstance("HmacSHA256");
