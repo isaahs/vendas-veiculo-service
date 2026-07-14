@@ -62,13 +62,13 @@ class VendasServiceIntegrationTest {
     private String generateToken() {
         return com.auth0.jwt.JWT.create()
                 .withSubject("catalog-service")
-                .sign(com.auth0.jwt.algorithms.Algorithm.HMAC256("minha-chave-secreta-m2m-super-secreta-e-longa-para-hmac-sha256"));
+                .sign(com.auth0.jwt.algorithms.Algorithm.HMAC256("9a7262174c106437a346f906b3a0e67e3dfd36480b2713e33e9d80d2cf34d588"));
     }
 
     private String calculateHmac(String body) throws Exception {
         javax.crypto.Mac sha256Hmac = javax.crypto.Mac.getInstance("HmacSHA256");
         javax.crypto.spec.SecretKeySpec secretKey = new javax.crypto.spec.SecretKeySpec(
-                "minha-chave-secreta-hmac-super-secreta-e-longa-para-webhooks".getBytes(java.nio.charset.StandardCharsets.UTF_8), 
+                "super-secret-hmac-signature-key-for-webhook-validation-2026".getBytes(java.nio.charset.StandardCharsets.UTF_8),
                 "HmacSHA256"
         );
         sha256Hmac.init(secretKey);
