@@ -29,6 +29,7 @@ public class SecurityConfig {
             .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(authorize -> authorize
                 .requestMatchers("/swagger-ui/**", "/v3/api-docs/**", "/actuator/health").permitAll()
+                .requestMatchers(HttpMethod.POST, "/auth/dev-token", "/auth/dev-hmac-signature").permitAll()
                 .requestMatchers(HttpMethod.GET, "/veiculos").permitAll()
                 .requestMatchers(HttpMethod.GET, "/veiculos/vendidos").permitAll()
                 .requestMatchers(HttpMethod.POST, "/vendas").permitAll()
